@@ -227,7 +227,10 @@ async def get_download_link(client: httpx.AsyncClient, surl: str, fs_id: str,
                             share_id: str, uk: str, headers: dict) -> str:
     """Try to get direct download link."""
     if not fs_id:
+        logger.warning("No fs_id provided for download link")
         return ""
+    
+    logger.info(f"Attempting to get download link for fs_id: {fs_id}")
     
     download_urls = [
         f"https://www.1024terabox.com/share/download?surl={surl}&fid_list=[{fs_id}]",
@@ -236,18 +239,32 @@ async def get_download_link(client: httpx.AsyncClient, surl: str, fs_id: str,
     
     for url in download_urls:
         try:
+            logger.info(f"Trying download URL: {url}")
             response = await client.get(url, headers=headers)
+            logger.info(f"Download API status: {response.status_code}")
+            
             if response.status_code == 200:
                 data = response.json()
+                logger.info(f"Download API response keys: {list(data.keys())}")
+                logger.info(f"Download API errno: {data.get('errno')}")
+                
                 if data.get('errno') == 0:
                     dlink = data.get('dlink')
                     if not dlink and 'list' in data and data['list']:
                         dlink = data['list'][0].get('dlink')
+                    
                     if dlink:
+                        logger.info(f"Got dlink: {dlink[:100]}...")
                         return dlink
-        except Exception:
+                    else:
+                        logger.warning("No dlink in successful response")
+                else:
+                    logger.warning(f"API returned error: {data.get('errno')} - {data.get('errmsg', 'Unknown error')}")
+        except Exception as e:
+            logger.error(f"Error getting download link from {url}: {e}")
             continue
     
+    logger.warning("All download link attempts failed")
     return ""
 
 

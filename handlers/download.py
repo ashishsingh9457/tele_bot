@@ -1,7 +1,10 @@
 import httpx
 import tempfile
 import os
+import logging
 from telegram import Update
+
+logger = logging.getLogger(__name__)
 
 
 async def download_and_send_file(update: Update, file_info: dict, current: int, total: int):
@@ -20,6 +23,10 @@ async def download_and_send_file(update: Update, file_info: dict, current: int, 
     file_url = file_info['url']
     file_name = file_info['name']
     file_size_str = file_info['size']
+    
+    logger.info(f"Starting download for: {file_name}")
+    logger.info(f"Download URL: {file_url}")
+    logger.info(f"File size: {file_size_str}")
     
     try:
         # Send progress message
@@ -53,13 +60,18 @@ async def download_and_send_file(update: Update, file_info: dict, current: int, 
                 
                 try:
                     # Stream download
+                    logger.info(f"Starting HTTP stream for: {file_url}")
                     async with client.stream('GET', file_url) as response:
+                        logger.info(f"Response status: {response.status_code}")
+                        logger.info(f"Response headers: {dict(response.headers)}")
                         response.raise_for_status()
                         
                         # Check content length
                         content_length = response.headers.get('content-length')
+                        logger.info(f"Content-Length: {content_length}")
                         if content_length:
                             total_size = int(content_length)
+                            logger.info(f"Total size to download: {format_size(total_size)}")
                             if total_size > MAX_FILE_SIZE:
                                 await progress_msg.edit_text(
                                     f"❌ File {current}/{total} is too large:\n"
@@ -78,6 +90,9 @@ async def download_and_send_file(update: Update, file_info: dict, current: int, 
                             temp_file.write(chunk)
                             downloaded += len(chunk)
                             
+                            if downloaded % (5 * 1024 * 1024) == 0:  # Log every 5MB
+                                logger.info(f"Downloaded: {format_size(downloaded)}")
+                            
                             # Check size limit during download
                             if downloaded > MAX_FILE_SIZE:
                                 await progress_msg.edit_text(
@@ -88,6 +103,9 @@ async def download_and_send_file(update: Update, file_info: dict, current: int, 
                                 os.unlink(temp_path)
                                 return
                     
+                    logger.info(f"Download complete. Total downloaded: {format_size(downloaded)}")
+                    logger.info(f"Temp file size: {os.path.getsize(temp_path)} bytes")
+                    
                     # Update progress
                     await progress_msg.edit_text(
                         f"📤 Uploading file {current}/{total} to Telegram:\n`{file_name}`\n\nPlease wait..."
@@ -95,6 +113,7 @@ async def download_and_send_file(update: Update, file_info: dict, current: int, 
                     
                     # Send file to Telegram
                     with open(temp_path, 'rb') as video_file:
+                        logger.info(f"Sending video to Telegram: {file_name}")
                         await update.message.reply_video(
                             video=video_file,
                             filename=file_name,
@@ -105,6 +124,7 @@ async def download_and_send_file(update: Update, file_info: dict, current: int, 
                             connect_timeout=300,
                             pool_timeout=300
                         )
+                        logger.info("Video sent successfully")
                     
                     # Delete progress message
                     await progress_msg.delete()
