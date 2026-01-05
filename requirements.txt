@@ -10,3 +10,4 @@ python-telegram-bot==22.5
 typing_extensions==4.15.0
 beautifulsoup4==4.12.3
 playwright==1.48.0
+requests==2.31.0

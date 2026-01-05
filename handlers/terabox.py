@@ -1,13 +1,18 @@
 import re
 import json
-import httpx
 import logging
 from urllib.parse import urlparse
 from bs4 import BeautifulSoup
 from telegram import Update
 from telegram.ext import ContextTypes
+import logging
+import re
+from urllib.parse import urlparse, parse_qs
+import httpx
+import json
+
 from .download import download_and_send_file
-from .terabox_browser import get_terabox_download_with_browser
+from .terabox_direct_v2 import get_terabox_download_direct
 
 logger = logging.getLogger(__name__)
 
@@ -40,13 +45,13 @@ async def terabox_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     status_msg = await update.message.reply_text("🔍 Processing Terabox URL... Please wait.")
 
     try:
-        # Use browser automation to bypass anti-bot protection
+        # Use direct API method (no browser needed!)
         logger.info(f"Fetching download link for: {url}")
-        logger.info("Using browser automation to bypass verification...")
+        logger.info("Using direct API method...")
         
-        await status_msg.edit_text("🔍 Processing Terabox URL...\n\n⏳ Starting browser automation (this may take 10-20 seconds)...")
+        await status_msg.edit_text("🔍 Processing Terabox URL...\n\n⏳ Extracting download link...")
         
-        file_data = await get_terabox_download_with_browser(url)
+        file_data = get_terabox_download_direct(url)
         
         if not file_data or not file_data.get('url'):
             await status_msg.edit_text(
