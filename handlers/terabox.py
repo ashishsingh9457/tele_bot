@@ -141,7 +141,7 @@ async def extract_mp4_files(url: str) -> list:
                         for match in matches:
                             try:
                                 data = json.loads(match)
-                                extracted = extract_files_from_json(data)
+                                extracted = extract_files_from_json(data, include_without_dlink=True)
                                 mp4_files.extend(extracted)
                             except (json.JSONDecodeError, TypeError):
                                 continue
