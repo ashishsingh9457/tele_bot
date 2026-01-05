@@ -2,11 +2,11 @@ import re
 import json
 import httpx
 import logging
+from urllib.parse import urlparse
 from bs4 import BeautifulSoup
 from telegram import Update
 from telegram.ext import ContextTypes
 from .download import download_and_send_file
-from .terabox_final import get_terabox_file
 
 logger = logging.getLogger(__name__)
 
@@ -39,9 +39,85 @@ async def terabox_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     status_msg = await update.message.reply_text("🔍 Processing Terabox URL... Please wait.")
 
     try:
-        # Use final implementation that extracts yunData from page
+        # Use external API - this is the only working method
         logger.info(f"Fetching download link for: {url}")
-        file_data = await get_terabox_file(url)
+        
+        # Change domain to 1024terabox.com for better compatibility
+        netloc = urlparse(url).netloc
+        modified_url = url.replace(netloc, "1024terabox.com")
+        
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:126.0) Gecko/20100101 Firefox/126.0",
+            "Accept": "application/json, text/plain, */*",
+            "Accept-Language": "en-US,en;q=0.5",
+            "Content-Type": "application/json",
+            "Origin": "https://ytshorts.savetube.me",
+        }
+        
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            response = await client.post(
+                "https://ytshorts.savetube.me/api/v1/terabox-downloader",
+                headers=headers,
+                json={"url": modified_url},
+            )
+            
+            if response.status_code != 200:
+                logger.error(f"API returned status: {response.status_code}")
+                await status_msg.edit_text(
+                    "❌ Could not extract download link from this Terabox URL.\n\n"
+                    "The external service is currently unavailable. Please try again later."
+                )
+                return
+            
+            data = response.json()
+            logger.info(f"API response: {list(data.keys())}")
+            
+            responses = data.get('response', [])
+            if not responses:
+                await status_msg.edit_text(
+                    "❌ Could not extract download link from this Terabox URL.\n\n"
+                    "Please make sure:\n"
+                    "• The link is valid and accessible\n"
+                    "• The file is not password protected\n"
+                    "• The file is a video (MP4)"
+                )
+                return
+            
+            resolutions = responses[0].get('resolutions', {})
+            download_link = resolutions.get('Fast Download', '')
+            video_link = resolutions.get('HD Video', '')
+            
+            if not download_link and not video_link:
+                await status_msg.edit_text("❌ No download link available for this file.")
+                return
+            
+            # Get file info
+            file_name = "video.mp4"
+            size_bytes = 0
+            
+            if video_link:
+                head_response = await client.head(video_link)
+                content_length = head_response.headers.get("Content-Length")
+                if content_length:
+                    size_bytes = int(content_length)
+                
+                content_disposition = head_response.headers.get("content-disposition")
+                if content_disposition:
+                    fname_match = re.findall(r'filename="(.+)"', content_disposition)
+                    if fname_match:
+                        file_name = fname_match[0]
+            
+            # Get direct download link
+            direct_link = download_link
+            if download_link:
+                head_response = await client.head(download_link)
+                direct_link = head_response.headers.get("location", download_link)
+            
+            file_data = {
+                'name': file_name,
+                'url': direct_link if direct_link else video_link,
+                'size': format_size(size_bytes) if size_bytes else "Unknown",
+            }
         
         if not file_data or not file_data.get('url'):
             await status_msg.edit_text(
@@ -84,6 +160,22 @@ async def terabox_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"❌ Error processing Terabox URL:\n{str(e)}\n\n"
             "Please make sure the link is accessible and try again."
         )
+
+
+def format_size(size_bytes: int) -> str:
+    """Format file size in human-readable format."""
+    if not size_bytes:
+        return "Unknown"
+    
+    try:
+        size_bytes = int(size_bytes)
+        for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
+            if size_bytes < 1024.0:
+                return f"{size_bytes:.2f} {unit}"
+            size_bytes /= 1024.0
+        return f"{size_bytes:.2f} PB"
+    except (ValueError, TypeError):
+        return "Unknown"
 
 
 def is_valid_terabox_url(url: str) -> bool:
