@@ -6,7 +6,7 @@ from bs4 import BeautifulSoup
 from telegram import Update
 from telegram.ext import ContextTypes
 from .download import download_and_send_file
-from .terabox_api import get_terabox_download_link
+from .terabox_direct import get_file_info_direct
 
 logger = logging.getLogger(__name__)
 
@@ -39,11 +39,11 @@ async def terabox_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     status_msg = await update.message.reply_text("🔍 Processing Terabox URL... Please wait.")
 
     try:
-        # Use the new API-based approach to get download link
+        # Use direct Terabox API implementation
         logger.info(f"Fetching download link for: {url}")
-        file_data = await get_terabox_download_link(url)
+        file_data = await get_file_info_direct(url)
         
-        if not file_data or not file_data.get('direct_link'):
+        if not file_data or not file_data.get('url'):
             await status_msg.edit_text(
                 "❌ Could not extract download link from this Terabox URL.\n\n"
                 "Please make sure:\n"
@@ -56,9 +56,8 @@ async def terabox_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Prepare file info for display/download
         file_info = {
             'name': file_data.get('file_name', 'video.mp4'),
-            'url': file_data.get('direct_link'),
+            'url': file_data.get('url'),
             'size': file_data.get('size', 'Unknown'),
-            'thumb': file_data.get('thumb')
         }
         
         logger.info(f"Successfully extracted: {file_info['name']}, size: {file_info['size']}")
