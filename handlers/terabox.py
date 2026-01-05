@@ -234,9 +234,13 @@ def extract_files_from_json(data: dict, include_without_dlink: bool = False) -> 
                 
                 # Check if it's an MP4 file (case insensitive) and not a directory
                 isdir = obj.get('isdir', 0)
+                logger.info(f"Checking file: {filename}, isdir: {isdir}, is_mp4: {filename.lower().endswith('.mp4')}")
+                
                 if filename.lower().endswith('.mp4') and isdir == 0:
                     # Get download link if available
                     download_link = obj.get('dlink') or obj.get('download_url') or obj.get('url', '')
+                    
+                    logger.info(f"Found MP4: {filename}, has_dlink: {bool(download_link)}, include_without_dlink: {include_without_dlink}")
                     
                     # Add file info (with or without download link depending on flag)
                     if download_link or include_without_dlink:
@@ -250,6 +254,7 @@ def extract_files_from_json(data: dict, include_without_dlink: bool = False) -> 
                             'uk': obj.get('uk', ''),
                             'isdir': isdir
                         })
+                        logger.info(f"Added file to list: {filename}")
             
             # Recursively search nested objects
             for value in obj.values():
@@ -260,6 +265,7 @@ def extract_files_from_json(data: dict, include_without_dlink: bool = False) -> 
     
     recursive_search(data)
     
+    logger.info(f"Total files extracted: {len(files)}")
     return files
 
 
