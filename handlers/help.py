@@ -7,6 +7,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = (
         "🤖 *Available Commands* 🤖\n\n"
         "/start - Start the bot and see welcome message\n"
+        "/terabox <url> - Extract MP4 files from Terabox links\n"
         "/time - Show current time\n"
         "/date - Show today's date\n"
         "/help - Show this help message"

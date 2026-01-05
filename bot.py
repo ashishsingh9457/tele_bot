@@ -1,7 +1,7 @@
 from telegram.ext import Application, CommandHandler
 
 from bot_config import TOKEN
-from handlers import start, help_command, show_time, show_date
+from handlers import start, help_command, show_time, show_date, terabox_handler
 
 def main():
     """Start the bot."""
@@ -17,6 +17,7 @@ def main():
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("time", show_time))
     application.add_handler(CommandHandler("date", show_date))
+    application.add_handler(CommandHandler("terabox", terabox_handler))
 
     # Run the bot until the user presses Ctrl-C
     print("Bot is starting...")
