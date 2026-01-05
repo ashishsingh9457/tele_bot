@@ -74,6 +74,8 @@ def is_valid_terabox_url(url: str) -> bool:
         r'https?://(?:www\.)?teraboxapp\.com/s/[\w-]+',
         r'https?://(?:www\.)?terabox\.com/sharing/link\?surl=[\w-]+',
         r'https?://(?:www\.)?terabox\.app/sharing/link\?surl=[\w-]+',
+        r'https?://(?:www\.)?terabox\.app/wap/share/filelist\?surl=[\w-]+',
+        r'https?://(?:www\.)?terabox\.com/wap/share/filelist\?surl=[\w-]+',
     ]
     return any(re.match(pattern, url) for pattern in terabox_patterns)
 
