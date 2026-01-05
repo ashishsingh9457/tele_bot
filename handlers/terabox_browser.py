@@ -94,44 +94,53 @@ async def get_terabox_download_with_browser(url: str) -> dict:
                 
                 logger.info(f"Page data: {file_info}")
                 
-                # Try to click download button and intercept the download URL
-                logger.info("Looking for download button...")
+                # Intercept network requests to find video streaming URLs
+                logger.info("Setting up network interception for video URLs...")
                 
-                download_url = None
+                video_urls = []
                 
-                # Set up request interception to catch download URLs
-                async def handle_request(request):
-                    nonlocal download_url
-                    url = request.url
-                    # Look for download-related URLs, but exclude analytics
-                    if 'analytics' in url.lower() or 'google' in url.lower():
-                        return  # Skip analytics URLs
+                async def handle_response(response):
+                    nonlocal video_urls
+                    url = response.url
                     
-                    # Look for actual download URLs
-                    if ('download' in url or 'dlink' in url or '.mp4' in url) and 'terabox' in url:
-                        logger.info(f"Intercepted potential download URL: {url[:100]}...")
-                        if not download_url:
-                            download_url = url
+                    # Skip analytics and common non-video URLs
+                    if any(skip in url.lower() for skip in ['analytics', 'google', 'facebook', 'doubleclick']):
+                        return
+                    
+                    # Look for video streaming URLs
+                    if '.mp4' in url or 'video' in url.lower() or response.headers.get('content-type', '').startswith('video/'):
+                        logger.info(f"Found potential video URL: {url[:150]}...")
+                        if url not in video_urls:
+                            video_urls.append(url)
                 
-                page.on('request', handle_request)
+                page.on('response', handle_response)
                 
-                # Try to find and click download button
-                download_selectors = [
-                    'button:has-text("Download")',
-                    'a:has-text("Download")',
-                    '.download-button',
-                    '[class*="download"]',
-                    'button[class*="download"]',
+                # Try to trigger video preview/player to load the streaming URL
+                logger.info("Looking for video player or preview...")
+                
+                # Try to find and click play button or video preview
+                play_selectors = [
+                    'video',
+                    '.video-player',
+                    '[class*="video"]',
+                    '[class*="player"]',
+                    'button[class*="play"]',
+                    '.play-button',
                 ]
                 
-                for selector in download_selectors:
+                for selector in play_selectors:
                     try:
-                        logger.info(f"Trying selector: {selector}")
+                        logger.info(f"Trying to find video element: {selector}")
                         element = await page.wait_for_selector(selector, timeout=5000)
                         if element:
-                            logger.info(f"Found download element with selector: {selector}")
-                            await element.click()
-                            # Wait for download to start
+                            logger.info(f"Found video element with selector: {selector}")
+                            # Try to click or interact with it
+                            try:
+                                await element.click()
+                                logger.info("Clicked video element")
+                            except:
+                                pass
+                            # Wait for video to load
                             await asyncio.sleep(3)
                             break
                     except PlaywrightTimeout:
@@ -140,8 +149,25 @@ async def get_terabox_download_with_browser(url: str) -> dict:
                         logger.debug(f"Error with selector {selector}: {e}")
                         continue
                 
-                # Don't rely on intercepted URLs - use API directly
-                logger.info("Using API to get file info and construct download URL...")
+                # Wait a bit more for any lazy-loaded video URLs
+                await asyncio.sleep(2)
+                
+                # Check if we found any video URLs
+                if video_urls:
+                    logger.info(f"Found {len(video_urls)} video URL(s) from network interception")
+                    for i, url in enumerate(video_urls):
+                        logger.info(f"Video URL {i+1}: {url[:200]}...")
+                    
+                    # Use the first video URL found
+                    filename = file_info.get('fileName', 'video.mp4').strip()
+                    return {
+                        'file_name': filename,
+                        'url': video_urls[0],
+                        'size': file_info.get('fileSize', 'Unknown'),
+                    }
+                
+                # If no video URLs intercepted, try API approach
+                logger.info("No video URLs intercepted, trying API approach...")
                 
                 # Make API call to get file list
                 api_url = f"https://www.terabox.com/share/list?shorturl={surl}&root=1"
@@ -157,46 +183,21 @@ async def get_terabox_download_with_browser(url: str) -> dict:
                             file = file_list[0]
                             filename = file.get('server_filename', 'video.mp4')
                             size = file.get('size', 0)
-                            fs_id = file.get('fs_id', '')
                             dlink = file.get('dlink', '')
                             
-                            logger.info(f"Got file info from API: {filename}, fs_id: {fs_id}")
+                            logger.info(f"Got file info from API: {filename}")
                             
-                            # If dlink is available, use it
+                            # If dlink is available in list API, use it
                             if dlink:
-                                logger.info(f"Found dlink in API response: {dlink[:100]}...")
+                                logger.info(f"Found dlink in list API: {dlink[:100]}...")
                                 return {
                                     'file_name': filename,
                                     'url': dlink,
                                     'size': format_size(size),
                                 }
                             
-                            # Try to get download link via download API
-                            download_api_url = f"https://www.terabox.com/share/download?surl={surl}&fid_list=[{fs_id}]"
-                            logger.info(f"Trying download API: {download_api_url}")
-                            
-                            download_response = await page.request.get(download_api_url)
-                            if download_response.ok:
-                                download_data = await download_response.json()
-                                logger.info(f"Download API errno: {download_data.get('errno')}")
-                                
-                                if download_data.get('errno') == 0:
-                                    dlink = download_data.get('dlink')
-                                    if not dlink and 'list' in download_data and download_data['list']:
-                                        dlink = download_data['list'][0].get('dlink')
-                                    
-                                    if dlink:
-                                        logger.info(f"Got dlink from download API: {dlink[:100]}...")
-                                        return {
-                                            'file_name': filename,
-                                            'url': dlink,
-                                            'size': format_size(size),
-                                        }
-                                else:
-                                    logger.warning(f"Download API error: {download_data.get('errno')} - {download_data.get('errmsg')}")
-                            
-                            # If all else fails, return file info without URL
-                            logger.warning("Could not get download link, returning file info only")
+                            # No download link available
+                            logger.warning("No download link available from any source")
                             return {
                                 'file_name': filename,
                                 'url': '',
