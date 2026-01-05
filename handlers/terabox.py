@@ -56,10 +56,10 @@ async def terabox_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not file_data or not file_data.get('url'):
             await status_msg.edit_text(
                 "❌ Could not extract download link from this Terabox URL.\n\n"
-                "Please make sure:\n"
-                "• The link is valid and accessible\n"
-                "• The file is not password protected\n"
-                "• The file is a video (MP4)"
+                "**Reason:** Terabox requires verification when accessed from servers.\n\n"
+                "**Solution:** The bot admin needs to add authenticated Terabox cookies.\n"
+                "See `TERABOX_SETUP.md` in the repository for setup instructions.\n\n"
+                "This is a Terabox limitation, not a bot issue."
             )
             return
 

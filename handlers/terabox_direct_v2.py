@@ -1,14 +1,21 @@
 """
 Direct Terabox download implementation based on working terabox-cli approach.
 This extracts jsToken and browserid from the page, then uses them to get download links.
-No external APIs or authentication required!
+Uses authentication cookies if available to bypass verification.
 """
 import re
 import logging
 import requests
+import os
 from urllib.parse import urlparse, parse_qs
 
 logger = logging.getLogger(__name__)
+
+# Get cookies from environment if available
+TERABOX_COOKIES = os.getenv('TERABOX_COOKIES', '')
+
+# Residential proxy configuration (optional)
+PROXY_URL = os.getenv('PROXY_URL', '')  # Format: http://user:pass@proxy-host:port
 
 
 def extract_surl(url: str) -> str:
@@ -30,6 +37,7 @@ def get_terabox_download_direct(url: str) -> dict:
     """
     Get Terabox download link using direct API calls.
     Based on working terabox-cli implementation.
+    Supports residential proxies to bypass server IP detection.
     
     Returns:
         dict: {
@@ -41,9 +49,33 @@ def get_terabox_download_direct(url: str) -> dict:
     """
     try:
         session = requests.Session()
+        
+        # Enhanced headers to mimic real browser
         headers = {
-            'user-agent': 'Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36'
+            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+            'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+            'accept-language': 'en-US,en;q=0.9',
+            'accept-encoding': 'gzip, deflate, br',
+            'sec-ch-ua': '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
+            'sec-ch-ua-mobile': '?0',
+            'sec-ch-ua-platform': '"Windows"',
+            'sec-fetch-dest': 'document',
+            'sec-fetch-mode': 'navigate',
+            'sec-fetch-site': 'none',
+            'sec-fetch-user': '?1',
+            'upgrade-insecure-requests': '1',
+            'referer': 'https://www.terabox.com/',
         }
+        
+        # Configure proxy if available
+        proxies = {}
+        if PROXY_URL:
+            proxies = {
+                'http': PROXY_URL,
+                'https': PROXY_URL
+            }
+            logger.info("Using residential proxy to bypass detection")
+            session.proxies.update(proxies)
         
         # Extract surl
         surl = extract_surl(url)
@@ -78,10 +110,27 @@ def get_terabox_download_direct(url: str) -> dict:
         cookie_dict = session.cookies.get_dict()
         cookie = 'lang=en;' + ';'.join([f'{k}={v}' for k, v in cookie_dict.items()])
         
+        # Load authentication cookies if available
+        auth_cookies = {}
+        if TERABOX_COOKIES:
+            try:
+                import json
+                cookies_list = json.loads(TERABOX_COOKIES)
+                for cookie in cookies_list:
+                    auth_cookies[cookie['name']] = cookie['value']
+                logger.info(f"Loaded {len(auth_cookies)} authentication cookies")
+            except Exception as e:
+                logger.warning(f"Failed to parse cookies: {e}")
+        
         # Step 2: Get file info and metadata
         logger.info("Getting file information...")
         info_url = f'https://www.terabox.com/api/shorturlinfo?app_id=250528&shorturl=1{surl}&root=1'
-        info_response = session.get(info_url, headers=headers)
+        
+        # Try with auth cookies first if available
+        if auth_cookies:
+            info_response = session.get(info_url, headers=headers, cookies=auth_cookies)
+        else:
+            info_response = session.get(info_url, headers=headers)
         
         if info_response.status_code != 200:
             logger.error(f"Failed to get file info: {info_response.status_code}")
@@ -89,6 +138,13 @@ def get_terabox_download_direct(url: str) -> dict:
         
         info_data = info_response.json()
         logger.info(f"File info response: errno={info_data.get('errno')}")
+        
+        if info_data.get('errno') == 400210:
+            logger.error("Terabox requires verification (errno: 400210)")
+            logger.error("This happens when requests come from server IPs.")
+            logger.error("Solution: Add TERABOX_COOKIES environment variable with authenticated cookies.")
+            logger.error("See TERABOX_SETUP.md for instructions.")
+            return {}
         
         if info_data.get('errno') != 0:
             logger.error(f"API error: {info_data.get('errno')} - {info_data.get('errmsg')}")
