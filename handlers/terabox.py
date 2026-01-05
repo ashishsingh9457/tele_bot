@@ -6,7 +6,7 @@ from bs4 import BeautifulSoup
 from telegram import Update
 from telegram.ext import ContextTypes
 from .download import download_and_send_file
-from .download_link import fetch_download_link
+from .terabox_api import get_terabox_download_link
 
 logger = logging.getLogger(__name__)
 
@@ -39,34 +39,48 @@ async def terabox_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     status_msg = await update.message.reply_text("🔍 Processing Terabox URL... Please wait.")
 
     try:
-        mp4_files = await extract_mp4_files(url)
+        # Use the new API-based approach to get download link
+        logger.info(f"Fetching download link for: {url}")
+        file_data = await get_terabox_download_link(url)
         
-        if not mp4_files:
+        if not file_data or not file_data.get('direct_link'):
             await status_msg.edit_text(
-                "❌ No MP4 files found in this Terabox link."
+                "❌ Could not extract download link from this Terabox URL.\n\n"
+                "Please make sure:\n"
+                "• The link is valid and accessible\n"
+                "• The file is not password protected\n"
+                "• The file is a video (MP4)"
             )
             return
 
-        # Display found files
-        response = "✅ *Found MP4 Files:*\n\n"
-        for idx, file_info in enumerate(mp4_files, 1):
-            response += f"{idx}. `{file_info['name']}`\n"
-            response += f"   Size: {file_info['size']}\n"
-            if not should_download:
-                response += f"   Link: {file_info['url']}\n"
-            response += "\n"
+        # Prepare file info for display/download
+        file_info = {
+            'name': file_data.get('file_name', 'video.mp4'),
+            'url': file_data.get('direct_link'),
+            'size': file_data.get('size', 'Unknown'),
+            'thumb': file_data.get('thumb')
+        }
+        
+        logger.info(f"Successfully extracted: {file_info['name']}, size: {file_info['size']}")
 
+        # Display found file
+        response = "✅ *Found MP4 File:*\n\n"
+        response += f"📁 `{file_info['name']}`\n"
+        response += f"📊 Size: {file_info['size']}\n"
+        
         if not should_download:
+            response += f"🔗 Link: {file_info['url']}\n"
             response += "\n💡 *Tip:* Remove 'list' to download files automatically."
             await status_msg.edit_text(response, parse_mode='Markdown')
         else:
+            response += "\n⏬ Downloading and sending..."
             await status_msg.edit_text(response, parse_mode='Markdown')
             
-            # Download and send files
-            for idx, file_info in enumerate(mp4_files, 1):
-                await download_and_send_file(update, file_info, idx, len(mp4_files))
+            # Download and send file
+            await download_and_send_file(update, file_info, 1, 1)
 
     except Exception as e:
+        logger.error(f"Error in terabox_handler: {e}", exc_info=True)
         await status_msg.edit_text(
             f"❌ Error processing Terabox URL:\n{str(e)}\n\n"
             "Please make sure the link is accessible and try again."
