@@ -5,10 +5,17 @@ This bypasses verification by using a real browser.
 import re
 import asyncio
 import logging
+import os
+import json
 from urllib.parse import urlparse, parse_qs
 from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeout
 
 logger = logging.getLogger(__name__)
+
+# Terabox account credentials from environment variables
+TERABOX_EMAIL = os.getenv('TERABOX_EMAIL', '')
+TERABOX_PASSWORD = os.getenv('TERABOX_PASSWORD', '')
+TERABOX_COOKIES_JSON = os.getenv('TERABOX_COOKIES', '')  # JSON string of cookies
 
 
 def extract_surl(url: str) -> str:
@@ -57,6 +64,15 @@ async def get_terabox_download_with_browser(url: str) -> dict:
                 viewport={'width': 1920, 'height': 1080},
                 user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
             )
+            
+            # Load Terabox cookies if available
+            if TERABOX_COOKIES_JSON:
+                try:
+                    cookies = json.loads(TERABOX_COOKIES_JSON)
+                    await context.add_cookies(cookies)
+                    logger.info("Loaded Terabox authentication cookies")
+                except Exception as e:
+                    logger.warning(f"Failed to load cookies: {e}")
             
             page = await context.new_page()
             
@@ -239,27 +255,67 @@ async def get_terabox_download_with_browser(url: str) -> dict:
                     except Exception as e:
                         logger.error(f"External API failed: {e}", exc_info=True)
                 
-                # Last resort: try internal API
+                # If cookies are loaded, try authenticated download API
+                if TERABOX_COOKIES_JSON:
+                    logger.info("Trying authenticated download API with cookies...")
+                    
+                    # Get file list first
+                    list_api_url = f"https://www.terabox.com/share/list?shorturl={surl}&root=1"
+                    list_response = await page.request.get(list_api_url)
+                    
+                    if list_response.ok:
+                        list_data = await list_response.json()
+                        logger.info(f"List API errno: {list_data.get('errno')}")
+                        
+                        if list_data.get('errno') == 0 and list_data.get('list'):
+                            file = list_data['list'][0]
+                            fs_id = file.get('fs_id')
+                            filename = file.get('server_filename', 'video.mp4')
+                            size = file.get('size', 0)
+                            
+                            # Try to get download link with authentication
+                            download_api_url = f"https://www.terabox.com/share/download?surl={surl}&fid_list=[{fs_id}]"
+                            logger.info(f"Trying authenticated download API: {download_api_url}")
+                            
+                            download_response = await page.request.get(download_api_url)
+                            if download_response.ok:
+                                download_data = await download_response.json()
+                                logger.info(f"Download API errno: {download_data.get('errno')}")
+                                
+                                if download_data.get('errno') == 0:
+                                    dlink = download_data.get('dlink')
+                                    if not dlink and 'list' in download_data and download_data['list']:
+                                        dlink = download_data['list'][0].get('dlink')
+                                    
+                                    if dlink:
+                                        logger.info(f"Got authenticated download link: {dlink[:100]}...")
+                                        return {
+                                            'file_name': filename,
+                                            'url': dlink,
+                                            'size': format_size(size),
+                                        }
+                                    else:
+                                        logger.warning(f"No dlink in authenticated response: {download_data}")
+                                else:
+                                    logger.warning(f"Authenticated download API error: {download_data.get('errno')} - {download_data.get('errmsg')}")
+                
+                # Final fallback: return file info without download link
+                logger.warning("No download link available - authentication may be required")
                 api_url = f"https://www.terabox.com/share/list?shorturl={surl}&root=1"
                 response = await page.request.get(api_url)
                 
                 if response.ok:
                     data = await response.json()
-                    logger.info(f"Internal API response errno: {data.get('errno')}")
-                    
-                    if data.get('errno') == 0:
-                        file_list = data.get('list', [])
-                        if file_list:
-                            file = file_list[0]
-                            filename = file.get('server_filename', 'video.mp4')
-                            size = file.get('size', 0)
-                            
-                            logger.warning("No download link available - Terabox requires verification")
-                            return {
-                                'file_name': filename,
-                                'url': '',
-                                'size': format_size(size),
-                            }
+                    if data.get('errno') == 0 and data.get('list'):
+                        file = data['list'][0]
+                        filename = file.get('server_filename', 'video.mp4')
+                        size = file.get('size', 0)
+                        
+                        return {
+                            'file_name': filename,
+                            'url': '',
+                            'size': format_size(size),
+                        }
                 
                 logger.error("Could not extract download information")
                 return {}
