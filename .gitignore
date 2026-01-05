@@ -58,3 +58,6 @@ local_settings.py
 # Project specific
 *.sqlite3
 *.db
+
+# Example bots from git (for reference only)
+bots_example_from_git/
