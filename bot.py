@@ -1,6 +1,6 @@
 from telegram.ext import Application, CommandHandler
 
-from config import TOKEN
+from bot_config import TOKEN
 from handlers import start, help_command, show_time, show_date
 
 def main():
