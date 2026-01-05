@@ -54,7 +54,7 @@ async def terabox_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Origin": "https://ytshorts.savetube.me",
         }
         
-        async with httpx.AsyncClient(timeout=120.0) as client:
+        async with httpx.AsyncClient(timeout=120.0, follow_redirects=True) as client:
             response = await client.post(
                 "https://ytshorts.savetube.me/api/v1/terabox-downloader",
                 headers=headers,
