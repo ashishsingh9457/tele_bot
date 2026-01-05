@@ -8,6 +8,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "👋 Hello! I'm your personal assistant bot!\n\n"
         "Here's what I can do:\n"
         "/terabox <url> - Extract MP4 files from Terabox links\n"
+        "/terabox <url> download - Download and send MP4 files\n"
         "/time - Show current time\n"
         "/date - Show today's date\n"
         "/help - Show all available commands"

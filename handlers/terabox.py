@@ -4,19 +4,22 @@ import httpx
 from bs4 import BeautifulSoup
 from telegram import Update
 from telegram.ext import ContextTypes
+from .download import download_and_send_file
 
 
 async def terabox_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle Terabox URL and extract MP4 files."""
+    """Handle Terabox URL and extract/download MP4 files."""
     if not context.args:
         await update.message.reply_text(
             "❌ Please provide a Terabox URL.\n\n"
-            "Usage: /terabox <url>\n"
-            "Example: /terabox https://terabox.com/s/xxxxx"
+            "Usage: /terabox <url> [download]\n"
+            "Example: /terabox https://terabox.com/s/xxxxx\n"
+            "Add 'download' to download files: /terabox <url> download"
         )
         return
 
     url = context.args[0]
+    should_download = len(context.args) > 1 and context.args[1].lower() == 'download'
     
     if not is_valid_terabox_url(url):
         await update.message.reply_text(
@@ -25,27 +28,38 @@ async def terabox_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    await update.message.reply_text("🔍 Processing Terabox URL... Please wait.")
+    status_msg = await update.message.reply_text("🔍 Processing Terabox URL... Please wait.")
 
     try:
         mp4_files = await extract_mp4_files(url)
         
         if not mp4_files:
-            await update.message.reply_text(
+            await status_msg.edit_text(
                 "❌ No MP4 files found in this Terabox link."
             )
             return
 
+        # Display found files
         response = "✅ *Found MP4 Files:*\n\n"
         for idx, file_info in enumerate(mp4_files, 1):
             response += f"{idx}. `{file_info['name']}`\n"
             response += f"   Size: {file_info['size']}\n"
-            response += f"   Link: {file_info['url']}\n\n"
+            if not should_download:
+                response += f"   Link: {file_info['url']}\n"
+            response += "\n"
 
-        await update.message.reply_text(response, parse_mode='Markdown')
+        if not should_download:
+            response += "\n💡 *Tip:* Use `/terabox <url> download` to download files directly."
+            await status_msg.edit_text(response, parse_mode='Markdown')
+        else:
+            await status_msg.edit_text(response, parse_mode='Markdown')
+            
+            # Download and send files
+            for idx, file_info in enumerate(mp4_files, 1):
+                await download_and_send_file(update, file_info, idx, len(mp4_files))
 
     except Exception as e:
-        await update.message.reply_text(
+        await status_msg.edit_text(
             f"❌ Error processing Terabox URL:\n{str(e)}\n\n"
             "Please make sure the link is accessible and try again."
         )
