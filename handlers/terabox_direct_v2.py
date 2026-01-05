@@ -18,6 +18,15 @@ TERABOX_COOKIES = os.getenv('TERABOX_COOKIES', '')
 PROXY_URL = os.getenv('PROXY_URL', '')  # Format: http://user:pass@proxy-host:port
 
 
+def is_valid_terabox_url(url: str) -> bool:
+    """Check if URL is a valid Terabox URL."""
+    terabox_domains = [
+        'terabox.com', 'terabox.app', '1024tera.com', 
+        'teraboxapp.com', 'freeterabox.com', 'terabox.tech'
+    ]
+    return any(domain in url.lower() for domain in terabox_domains)
+
+
 def extract_surl(url: str) -> str:
     """Extract surl from Terabox URL."""
     parsed = urlparse(url)
