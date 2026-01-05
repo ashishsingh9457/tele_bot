@@ -1,10 +1,13 @@
 import re
 import json
 import httpx
+import logging
 from bs4 import BeautifulSoup
 from telegram import Update
 from telegram.ext import ContextTypes
 from .download import download_and_send_file
+
+logger = logging.getLogger(__name__)
 
 
 async def terabox_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -215,15 +218,30 @@ def extract_files_from_json(data: dict) -> list:
     
     def recursive_search(obj):
         if isinstance(obj, dict):
-            # Look for common file info keys
-            if 'server_filename' in obj and 'dlink' in obj:
-                filename = obj.get('server_filename', '')
-                if filename.endswith('.mp4'):
-                    files.append({
-                        'name': filename,
-                        'url': obj.get('dlink', ''),
-                        'size': format_size(obj.get('size', 0))
-                    })
+            # Look for common file info keys in Terabox API response
+            # Check multiple possible key combinations
+            has_filename = 'server_filename' in obj or 'filename' in obj or 'path' in obj
+            has_link = 'dlink' in obj or 'download_url' in obj or 'url' in obj
+            
+            if has_filename:
+                filename = obj.get('server_filename') or obj.get('filename') or obj.get('path', '')
+                # Extract just the filename if it's a path
+                if '/' in filename:
+                    filename = filename.split('/')[-1]
+                
+                # Check if it's an MP4 file (case insensitive)
+                if filename.lower().endswith('.mp4'):
+                    # Get download link
+                    download_link = obj.get('dlink') or obj.get('download_url') or obj.get('url', '')
+                    
+                    # Only add if we have a valid download link
+                    if download_link:
+                        files.append({
+                            'name': filename,
+                            'url': download_link,
+                            'size': format_size(obj.get('size', 0)),
+                            'isdir': obj.get('isdir', 0)
+                        })
             
             # Recursively search nested objects
             for value in obj.values():
@@ -233,6 +251,10 @@ def extract_files_from_json(data: dict) -> list:
                 recursive_search(item)
     
     recursive_search(data)
+    
+    # Filter out directories (isdir=1)
+    files = [f for f in files if f.get('isdir', 0) == 0]
+    
     return files
 
 
@@ -261,8 +283,31 @@ async def fetch_from_api(client: httpx.AsyncClient, surl: str, headers: dict) ->
             response = await client.get(endpoint, headers=headers, timeout=30.0)
             if response.status_code == 200:
                 data = response.json()
-                return extract_files_from_json(data)
-        except Exception:
+                
+                # Log the response for debugging
+                logger.info(f"API Response from {endpoint}")
+                logger.info(f"Response keys: {list(data.keys()) if isinstance(data, dict) else 'Not a dict'}")
+                
+                # Check if API returned an error
+                if isinstance(data, dict):
+                    errno = data.get('errno', 0)
+                    if errno != 0:
+                        logger.warning(f"API returned error code: {errno}")
+                        continue
+                    
+                    # Log list structure
+                    if 'list' in data:
+                        list_data = data.get('list', [])
+                        logger.info(f"Found {len(list_data)} items in list")
+                        if list_data and isinstance(list_data, list) and len(list_data) > 0:
+                            logger.info(f"First item keys: {list(list_data[0].keys()) if isinstance(list_data[0], dict) else 'Not a dict'}")
+                
+                files = extract_files_from_json(data)
+                logger.info(f"Extracted {len(files)} MP4 files")
+                if files:
+                    return files
+        except Exception as e:
+            logger.error(f"Error fetching from API {endpoint}: {e}")
             continue
     
     return []
