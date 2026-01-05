@@ -157,13 +157,48 @@ async def try_download_with_session(client: httpx.AsyncClient, surl: str,
     try:
         # Test if streaming URL works
         response = await client.head(streaming_url, headers=headers, cookies=cookies)
+        logger.info(f"Streaming URL status: {response.status_code}")
+        logger.info(f"Streaming URL headers: {dict(response.headers)}")
+        
         if response.status_code == 200:
             content_type = response.headers.get('content-type', '')
+            logger.info(f"Content-Type: {content_type}")
+            
             if 'video' in content_type or 'octet-stream' in content_type:
                 logger.info("Streaming URL appears valid")
                 return streaming_url
+            else:
+                logger.warning(f"Streaming URL returned non-video content-type: {content_type}")
     except Exception as e:
         logger.error(f"Streaming URL failed: {e}")
+    
+    # Method 3: Try alternative download construction
+    # Some Terabox files can be accessed via direct path
+    logger.info("Trying alternative download methods")
+    
+    # Try with different parameters
+    alt_urls = [
+        f"https://www.terabox.com/share/download?shareid={share_id}&uk={uk}&fid={fs_id}" if share_id and uk else None,
+        f"https://d.terabox.com/file/{fs_id}",
+        f"https://www.terabox.com/api/streaming?type=M3U8_AUTO_720&fid={fs_id}&surl={surl}",
+    ]
+    
+    for alt_url in alt_urls:
+        if not alt_url:
+            continue
+            
+        try:
+            logger.info(f"Trying alternative URL: {alt_url}")
+            response = await client.head(alt_url, headers=headers, cookies=cookies)
+            
+            if response.status_code == 200:
+                content_type = response.headers.get('content-type', '')
+                if 'video' in content_type or 'octet-stream' in content_type or 'application/x-mpegURL' in content_type:
+                    logger.info(f"Alternative URL works: {alt_url}")
+                    return alt_url
+        except Exception as e:
+            logger.error(f"Alternative URL {alt_url} failed: {e}")
+            continue
     
     return ""
 
