@@ -206,15 +206,21 @@ async def fetch_via_api(client: httpx.AsyncClient, surl: str, headers: dict) -> 
                         uk = data.get('uk', '')
                         fs_id = file.get('fs_id', '')
                         
-                        # Try to get download link
-                        dlink = await get_download_link(client, surl, fs_id, share_id, uk, headers)
+                        # Try to get download link with proper authentication
+                        dlink = await get_download_link_with_cookies(client, surl, fs_id, share_id, uk, headers)
+                        
+                        if not dlink:
+                            logger.warning("Could not get download link, will fail")
+                            return {}
                         
                         return {
                             'file_name': file.get('server_filename', 'video.mp4'),
-                            'url': dlink if dlink else f"https://www.1024terabox.com/sharing/link?surl={surl}",
+                            'url': dlink,
                             'size': format_size(file.get('size', 0)),
                             'sizebytes': file.get('size', 0),
                             'fs_id': fs_id,
+                            'share_id': share_id,
+                            'uk': uk,
                         }
         except Exception as e:
             logger.error(f"Error with API {api_url}: {e}")

@@ -6,7 +6,7 @@ from bs4 import BeautifulSoup
 from telegram import Update
 from telegram.ext import ContextTypes
 from .download import download_and_send_file
-from .terabox_scraper import get_terabox_file_info
+from .terabox_working import get_terabox_download_info
 
 logger = logging.getLogger(__name__)
 
@@ -39,9 +39,9 @@ async def terabox_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     status_msg = await update.message.reply_text("🔍 Processing Terabox URL... Please wait.")
 
     try:
-        # Use comprehensive scraper implementation
+        # Use working implementation with session cookies
         logger.info(f"Fetching download link for: {url}")
-        file_data = await get_terabox_file_info(url)
+        file_data = await get_terabox_download_info(url)
         
         if not file_data or not file_data.get('url'):
             await status_msg.edit_text(
