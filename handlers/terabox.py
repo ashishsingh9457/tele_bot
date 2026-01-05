@@ -16,14 +16,18 @@ async def terabox_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         await update.message.reply_text(
             "❌ Please provide a Terabox URL.\n\n"
-            "Usage: /terabox <url> [download]\n"
-            "Example: /terabox https://terabox.com/s/xxxxx\n"
-            "Add 'download' to download files: /terabox <url> download"
+            "Usage: /terabox <url>\n"
+            "Example: /terabox https://terabox.app/wap/share/filelist?surl=xxxxx\n\n"
+            "Files will be downloaded and sent automatically.\n"
+            "Add 'list' to only show links: /terabox <url> list"
         )
         return
 
     url = context.args[0]
-    should_download = len(context.args) > 1 and context.args[1].lower() == 'download'
+    # Download by default, unless user specifies 'list' to just show links
+    should_download = True
+    if len(context.args) > 1 and context.args[1].lower() == 'list':
+        should_download = False
     
     if not is_valid_terabox_url(url):
         await update.message.reply_text(
@@ -53,7 +57,7 @@ async def terabox_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             response += "\n"
 
         if not should_download:
-            response += "\n💡 *Tip:* Use `/terabox <url> download` to download files directly."
+            response += "\n💡 *Tip:* Remove 'list' to download files automatically."
             await status_msg.edit_text(response, parse_mode='Markdown')
         else:
             await status_msg.edit_text(response, parse_mode='Markdown')
