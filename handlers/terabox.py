@@ -6,6 +6,7 @@ from bs4 import BeautifulSoup
 from telegram import Update
 from telegram.ext import ContextTypes
 from .download import download_and_send_file
+from .download_link import fetch_download_link
 
 logger = logging.getLogger(__name__)
 
@@ -212,16 +213,14 @@ def clean_url(url: str) -> str:
     return url
 
 
-def extract_files_from_json(data: dict) -> list:
+def extract_files_from_json(data: dict, include_without_dlink: bool = False) -> list:
     """Extract MP4 files from JSON data structure."""
     files = []
     
     def recursive_search(obj):
         if isinstance(obj, dict):
             # Look for common file info keys in Terabox API response
-            # Check multiple possible key combinations
             has_filename = 'server_filename' in obj or 'filename' in obj or 'path' in obj
-            has_link = 'dlink' in obj or 'download_url' in obj or 'url' in obj
             
             if has_filename:
                 filename = obj.get('server_filename') or obj.get('filename') or obj.get('path', '')
@@ -229,18 +228,23 @@ def extract_files_from_json(data: dict) -> list:
                 if '/' in filename:
                     filename = filename.split('/')[-1]
                 
-                # Check if it's an MP4 file (case insensitive)
-                if filename.lower().endswith('.mp4'):
-                    # Get download link
+                # Check if it's an MP4 file (case insensitive) and not a directory
+                isdir = obj.get('isdir', 0)
+                if filename.lower().endswith('.mp4') and isdir == 0:
+                    # Get download link if available
                     download_link = obj.get('dlink') or obj.get('download_url') or obj.get('url', '')
                     
-                    # Only add if we have a valid download link
-                    if download_link:
+                    # Add file info (with or without download link depending on flag)
+                    if download_link or include_without_dlink:
                         files.append({
                             'name': filename,
                             'url': download_link,
                             'size': format_size(obj.get('size', 0)),
-                            'isdir': obj.get('isdir', 0)
+                            'fs_id': obj.get('fs_id', ''),
+                            'path': obj.get('path', ''),
+                            'share_id': obj.get('share_id', ''),
+                            'uk': obj.get('uk', ''),
+                            'isdir': isdir
                         })
             
             # Recursively search nested objects
@@ -251,9 +255,6 @@ def extract_files_from_json(data: dict) -> list:
                 recursive_search(item)
     
     recursive_search(data)
-    
-    # Filter out directories (isdir=1)
-    files = [f for f in files if f.get('isdir', 0) == 0]
     
     return files
 
@@ -302,10 +303,29 @@ async def fetch_from_api(client: httpx.AsyncClient, surl: str, headers: dict) ->
                         if list_data and isinstance(list_data, list) and len(list_data) > 0:
                             logger.info(f"First item keys: {list(list_data[0].keys()) if isinstance(list_data[0], dict) else 'Not a dict'}")
                 
-                files = extract_files_from_json(data)
+                # Extract files (including those without dlink)
+                files = extract_files_from_json(data, include_without_dlink=True)
                 logger.info(f"Extracted {len(files)} MP4 files")
+                
                 if files:
-                    return files
+                    # Fetch download links for files that don't have them
+                    share_id = data.get('share_id', '')
+                    uk = data.get('uk', '')
+                    
+                    for file in files:
+                        if not file['url'] and file['fs_id']:
+                            # Fetch download link
+                            dlink = await fetch_download_link(client, file['fs_id'], share_id, uk, surl, headers)
+                            if dlink:
+                                file['url'] = dlink
+                                logger.info(f"Fetched download link for {file['name']}")
+                    
+                    # Filter out files without download links
+                    files_with_links = [f for f in files if f['url']]
+                    logger.info(f"Files with download links: {len(files_with_links)}")
+                    
+                    if files_with_links:
+                        return files_with_links
         except Exception as e:
             logger.error(f"Error fetching from API {endpoint}: {e}")
             continue
