@@ -103,18 +103,25 @@ async def get_terabox_download_with_browser(url: str) -> dict:
                 async def handle_response(response):
                     nonlocal video_urls, all_requests
                     url = response.url
-                    
-                    # Log all non-analytics requests for debugging
-                    if not any(skip in url.lower() for skip in ['analytics', 'google', 'facebook', 'doubleclick', 'clarity.ms']):
-                        all_requests.append({
-                            'url': url[:200],
-                            'content_type': response.headers.get('content-type', 'unknown'),
-                            'status': response.status
-                        })
-                    
-                    # Look for video streaming URLs
                     content_type = response.headers.get('content-type', '').lower()
-                    if '.mp4' in url or 'video' in url.lower() or content_type.startswith('video/') or 'stream' in url.lower():
+                    
+                    # Skip analytics and tracking URLs completely
+                    if any(skip in url.lower() for skip in ['analytics', 'google', 'facebook', 'doubleclick', 'clarity.ms', '/api/analytics']):
+                        return
+                    
+                    # Log all other requests for debugging
+                    all_requests.append({
+                        'url': url[:200],
+                        'content_type': content_type,
+                        'status': response.status
+                    })
+                    
+                    # Look for actual video streaming URLs (strict filtering)
+                    # Must have .mp4/.m3u8 in URL OR video/* content-type
+                    is_video_url = '.mp4' in url or '.m3u8' in url or '.ts' in url
+                    is_video_content = content_type.startswith('video/')
+                    
+                    if is_video_url or is_video_content:
                         logger.info(f"Found potential video URL: {url[:150]}... (content-type: {content_type})")
                         if url not in video_urls:
                             video_urls.append(url)
