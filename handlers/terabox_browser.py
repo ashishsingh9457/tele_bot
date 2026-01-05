@@ -103,8 +103,12 @@ async def get_terabox_download_with_browser(url: str) -> dict:
                 async def handle_request(request):
                     nonlocal download_url
                     url = request.url
-                    # Look for download-related URLs
-                    if 'download' in url or 'dlink' in url or '.mp4' in url:
+                    # Look for download-related URLs, but exclude analytics
+                    if 'analytics' in url.lower() or 'google' in url.lower():
+                        return  # Skip analytics URLs
+                    
+                    # Look for actual download URLs
+                    if ('download' in url or 'dlink' in url or '.mp4' in url) and 'terabox' in url:
                         logger.info(f"Intercepted potential download URL: {url[:100]}...")
                         if not download_url:
                             download_url = url
@@ -136,23 +140,8 @@ async def get_terabox_download_with_browser(url: str) -> dict:
                         logger.debug(f"Error with selector {selector}: {e}")
                         continue
                 
-                # If we intercepted a download URL, use it
-                if download_url:
-                    logger.info(f"Successfully intercepted download URL")
-                    
-                    # Try to get file info
-                    filename = "video.mp4"
-                    if file_info.get('fileName'):
-                        filename = file_info['fileName']
-                    
-                    return {
-                        'file_name': filename,
-                        'url': download_url,
-                        'size': file_info.get('fileSize', 'Unknown'),
-                    }
-                
-                # If no download URL was intercepted, try to extract from page API calls
-                logger.info("No download URL intercepted, trying API extraction...")
+                # Don't rely on intercepted URLs - use API directly
+                logger.info("Using API to get file info and construct download URL...")
                 
                 # Make API call to get file list
                 api_url = f"https://www.terabox.com/share/list?shorturl={surl}&root=1"
@@ -168,16 +157,50 @@ async def get_terabox_download_with_browser(url: str) -> dict:
                             file = file_list[0]
                             filename = file.get('server_filename', 'video.mp4')
                             size = file.get('size', 0)
+                            fs_id = file.get('fs_id', '')
+                            dlink = file.get('dlink', '')
                             
-                            logger.info(f"Got file info from API: {filename}")
+                            logger.info(f"Got file info from API: {filename}, fs_id: {fs_id}")
                             
-                            # Since we can't get direct download link, return share URL
-                            # The download handler will need to use the browser session
+                            # If dlink is available, use it
+                            if dlink:
+                                logger.info(f"Found dlink in API response: {dlink[:100]}...")
+                                return {
+                                    'file_name': filename,
+                                    'url': dlink,
+                                    'size': format_size(size),
+                                }
+                            
+                            # Try to get download link via download API
+                            download_api_url = f"https://www.terabox.com/share/download?surl={surl}&fid_list=[{fs_id}]"
+                            logger.info(f"Trying download API: {download_api_url}")
+                            
+                            download_response = await page.request.get(download_api_url)
+                            if download_response.ok:
+                                download_data = await download_response.json()
+                                logger.info(f"Download API errno: {download_data.get('errno')}")
+                                
+                                if download_data.get('errno') == 0:
+                                    dlink = download_data.get('dlink')
+                                    if not dlink and 'list' in download_data and download_data['list']:
+                                        dlink = download_data['list'][0].get('dlink')
+                                    
+                                    if dlink:
+                                        logger.info(f"Got dlink from download API: {dlink[:100]}...")
+                                        return {
+                                            'file_name': filename,
+                                            'url': dlink,
+                                            'size': format_size(size),
+                                        }
+                                else:
+                                    logger.warning(f"Download API error: {download_data.get('errno')} - {download_data.get('errmsg')}")
+                            
+                            # If all else fails, return file info without URL
+                            logger.warning("Could not get download link, returning file info only")
                             return {
                                 'file_name': filename,
-                                'url': share_url,  # Fallback to share URL
+                                'url': '',
                                 'size': format_size(size),
-                                'needs_browser': True,  # Flag that this needs special handling
                             }
                 
                 logger.error("Could not extract download information")
