@@ -113,7 +113,7 @@ async def extract_mp4_files(url: str) -> list:
             mp4_files = []
             
             # Method 1: Parse with BeautifulSoup for structured data
-            soup = BeautifulSoup(html_content, 'lxml')
+            soup = BeautifulSoup(html_content, 'html.parser')
             
             # Method 2: Extract JSON data from script tags
             script_tags = soup.find_all('script')

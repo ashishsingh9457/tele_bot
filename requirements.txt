@@ -9,4 +9,3 @@ python-dotenv==1.2.1
 python-telegram-bot==22.5
 typing_extensions==4.15.0
 beautifulsoup4==4.12.3
-lxml==5.1.0
