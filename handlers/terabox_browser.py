@@ -184,16 +184,41 @@ async def get_terabox_download_with_browser(url: str) -> dict:
                         'size': file_info.get('fileSize', 'Unknown'),
                     }
                 
-                # If no video URLs intercepted, try API approach
-                logger.info("No video URLs intercepted, trying API approach...")
+                # If no video URLs intercepted, try external API as fallback
+                logger.info("No video URLs intercepted, trying external API as fallback...")
                 
-                # Make API call to get file list
+                # Try using a working external Terabox downloader API
+                try:
+                    external_api_url = f"https://terabox-downloader.nepdevsnepcoder.workers.dev/?url=https://www.terabox.com/sharing/link?surl={surl}"
+                    logger.info(f"Trying external API: {external_api_url[:100]}...")
+                    
+                    external_response = await page.request.get(external_api_url, timeout=15000)
+                    if external_response.ok:
+                        external_data = await external_response.json()
+                        logger.info(f"External API response: {external_data}")
+                        
+                        # Check if response has download link
+                        if external_data.get('downloadLink'):
+                            download_link = external_data['downloadLink']
+                            filename = external_data.get('fileName', 'video.mp4')
+                            size = external_data.get('fileSize', 'Unknown')
+                            
+                            logger.info(f"Got download link from external API: {download_link[:100]}...")
+                            return {
+                                'file_name': filename,
+                                'url': download_link,
+                                'size': size,
+                            }
+                except Exception as e:
+                    logger.error(f"External API failed: {e}")
+                
+                # Last resort: try internal API
                 api_url = f"https://www.terabox.com/share/list?shorturl={surl}&root=1"
                 response = await page.request.get(api_url)
                 
                 if response.ok:
                     data = await response.json()
-                    logger.info(f"API response errno: {data.get('errno')}")
+                    logger.info(f"Internal API response errno: {data.get('errno')}")
                     
                     if data.get('errno') == 0:
                         file_list = data.get('list', [])
@@ -201,21 +226,8 @@ async def get_terabox_download_with_browser(url: str) -> dict:
                             file = file_list[0]
                             filename = file.get('server_filename', 'video.mp4')
                             size = file.get('size', 0)
-                            dlink = file.get('dlink', '')
                             
-                            logger.info(f"Got file info from API: {filename}")
-                            
-                            # If dlink is available in list API, use it
-                            if dlink:
-                                logger.info(f"Found dlink in list API: {dlink[:100]}...")
-                                return {
-                                    'file_name': filename,
-                                    'url': dlink,
-                                    'size': format_size(size),
-                                }
-                            
-                            # No download link available
-                            logger.warning("No download link available from any source")
+                            logger.warning("No download link available - Terabox requires verification")
                             return {
                                 'file_name': filename,
                                 'url': '',
