@@ -234,9 +234,11 @@ def extract_files_from_json(data: dict, include_without_dlink: bool = False) -> 
                 
                 # Check if it's an MP4 file (case insensitive) and not a directory
                 isdir = obj.get('isdir', 0)
-                logger.info(f"Checking file: {filename}, isdir: {isdir}, is_mp4: {filename.lower().endswith('.mp4')}")
+                is_mp4 = filename.lower().endswith('.mp4')
+                logger.info(f"Checking file: {filename}, isdir: {isdir}, is_mp4: {is_mp4}")
                 
-                if filename.lower().endswith('.mp4') and isdir == 0:
+                if is_mp4 and isdir == 0:
+                    logger.info(f"Passed MP4 check for: {filename}")
                     # Get download link if available
                     download_link = obj.get('dlink') or obj.get('download_url') or obj.get('url', '')
                     
