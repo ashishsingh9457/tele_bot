@@ -187,30 +187,57 @@ async def get_terabox_download_with_browser(url: str) -> dict:
                 # If no video URLs intercepted, try external API as fallback
                 logger.info("No video URLs intercepted, trying external API as fallback...")
                 
-                # Try using a working external Terabox downloader API
-                try:
-                    external_api_url = f"https://terabox-downloader.nepdevsnepcoder.workers.dev/?url=https://www.terabox.com/sharing/link?surl={surl}"
-                    logger.info(f"Trying external API: {external_api_url[:100]}...")
-                    
-                    external_response = await page.request.get(external_api_url, timeout=15000)
-                    if external_response.ok:
-                        external_data = await external_response.json()
-                        logger.info(f"External API response: {external_data}")
+                # Try multiple external APIs
+                external_apis = [
+                    f"https://terabox-dl.qtcloud.workers.dev/api/get-info?shorturl={surl}",
+                    f"https://teradl-api.deno.dev/download?url=https://www.terabox.com/sharing/link?surl={surl}",
+                ]
+                
+                for api_url in external_apis:
+                    try:
+                        logger.info(f"Trying external API: {api_url[:100]}...")
                         
-                        # Check if response has download link
-                        if external_data.get('downloadLink'):
-                            download_link = external_data['downloadLink']
-                            filename = external_data.get('fileName', 'video.mp4')
-                            size = external_data.get('fileSize', 'Unknown')
+                        external_response = await page.request.get(api_url, timeout=20000)
+                        logger.info(f"External API status: {external_response.status}")
+                        
+                        if external_response.ok:
+                            external_data = await external_response.json()
+                            logger.info(f"External API response keys: {list(external_data.keys())}")
                             
-                            logger.info(f"Got download link from external API: {download_link[:100]}...")
-                            return {
-                                'file_name': filename,
-                                'url': download_link,
-                                'size': size,
-                            }
-                except Exception as e:
-                    logger.error(f"External API failed: {e}")
+                            # Try different response formats
+                            download_link = None
+                            filename = None
+                            size = None
+                            
+                            # Format 1: {downloadLink, fileName, fileSize}
+                            if external_data.get('downloadLink'):
+                                download_link = external_data['downloadLink']
+                                filename = external_data.get('fileName', 'video.mp4')
+                                size = external_data.get('fileSize', 'Unknown')
+                            # Format 2: {download_url, file_name, size}
+                            elif external_data.get('download_url'):
+                                download_link = external_data['download_url']
+                                filename = external_data.get('file_name', 'video.mp4')
+                                size = external_data.get('size', 'Unknown')
+                            # Format 3: {dlink, server_filename}
+                            elif external_data.get('dlink'):
+                                download_link = external_data['dlink']
+                                filename = external_data.get('server_filename', 'video.mp4')
+                                size = external_data.get('size', 'Unknown')
+                            
+                            if download_link:
+                                logger.info(f"Got download link from external API: {download_link[:100]}...")
+                                return {
+                                    'file_name': filename,
+                                    'url': download_link,
+                                    'size': size,
+                                }
+                            else:
+                                logger.warning(f"External API returned no download link: {external_data}")
+                        else:
+                            logger.warning(f"External API returned status {external_response.status}")
+                    except Exception as e:
+                        logger.error(f"External API failed: {e}", exc_info=True)
                 
                 # Last resort: try internal API
                 api_url = f"https://www.terabox.com/share/list?shorturl={surl}&root=1"
