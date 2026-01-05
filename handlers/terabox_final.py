@@ -112,47 +112,94 @@ async def get_terabox_file(url: str) -> dict:
 def extract_file_from_page(html: str) -> dict:
     """Extract file information from the HTML page."""
     try:
-        # Look for the yunData or similar embedded JSON
+        # Save a sample of the HTML for debugging
+        logger.info(f"HTML length: {len(html)}")
+        
+        # Look for the yunData or similar embedded JSON with more flexible patterns
         patterns = [
-            r'window\.yunData\s*=\s*({.+?});',
-            r'locals\.mset\(({.+?})\);',
-            r'var\s+yunData\s*=\s*({.+?});',
+            r'window\.yunData\s*=\s*(\{[^;]+\});',
+            r'locals\.mset\((\{[^)]+\})\);',
+            r'var\s+yunData\s*=\s*(\{[^;]+\});',
+            r'yunData\s*=\s*(\{[^;]+\});',
+            # Try to find any large JSON object that might contain file info
+            r'"file_list"\s*:\s*\[(\{[^\]]+\})\]',
         ]
         
         for pattern in patterns:
+            logger.info(f"Trying pattern: {pattern[:50]}...")
             matches = re.findall(pattern, html, re.DOTALL)
+            logger.info(f"Found {len(matches)} matches")
+            
             for match in matches:
                 try:
                     # Clean up the JSON
                     match = match.strip()
+                    
+                    # Try to parse as JSON
                     data = json.loads(match)
                     
-                    logger.info(f"Found yunData with keys: {list(data.keys())}")
+                    logger.info(f"Successfully parsed JSON with keys: {list(data.keys())}")
                     
                     # Extract file list
                     file_list = data.get('file_list', [])
                     if not file_list:
-                        continue
+                        # Maybe the match itself is a file object
+                        if 'server_filename' in data or 'fs_id' in data:
+                            file = data
+                            file_list = [file]
+                        else:
+                            continue
                     
                     file = file_list[0] if isinstance(file_list, list) else file_list
+                    
+                    logger.info(f"Found file: {file.get('server_filename', 'unknown')}")
                     
                     return {
                         'filename': file.get('server_filename', 'video.mp4'),
                         'size': file.get('size', 0),
-                        'fs_id': file.get('fs_id', ''),
-                        'share_id': data.get('shareid', ''),
-                        'uk': data.get('uk', ''),
-                        'sign': data.get('sign', ''),
-                        'timestamp': data.get('timestamp', ''),
+                        'fs_id': str(file.get('fs_id', '')),
+                        'share_id': str(data.get('shareid', data.get('share_id', ''))),
+                        'uk': str(data.get('uk', '')),
+                        'sign': str(data.get('sign', '')),
+                        'timestamp': str(data.get('timestamp', '')),
                     }
-                except json.JSONDecodeError:
+                except (json.JSONDecodeError, TypeError) as e:
+                    logger.debug(f"Failed to parse match: {str(e)[:100]}")
                     continue
         
-        logger.warning("Could not find yunData in page")
+        # If no patterns worked, try to find script tags with JSON
+        logger.info("Trying to extract from script tags")
+        script_pattern = r'<script[^>]*>(.*?)</script>'
+        scripts = re.findall(script_pattern, html, re.DOTALL)
+        logger.info(f"Found {len(scripts)} script tags")
+        
+        for script in scripts:
+            if 'server_filename' in script and 'fs_id' in script:
+                logger.info("Found script with file info")
+                # Try to extract JSON object
+                json_pattern = r'\{[^{}]*"server_filename"[^{}]*"fs_id"[^{}]*\}'
+                json_matches = re.findall(json_pattern, script)
+                for json_match in json_matches:
+                    try:
+                        data = json.loads(json_match)
+                        logger.info(f"Extracted from script: {data.get('server_filename')}")
+                        return {
+                            'filename': data.get('server_filename', 'video.mp4'),
+                            'size': data.get('size', 0),
+                            'fs_id': str(data.get('fs_id', '')),
+                            'share_id': '',
+                            'uk': '',
+                            'sign': '',
+                            'timestamp': '',
+                        }
+                    except json.JSONDecodeError:
+                        continue
+        
+        logger.warning("Could not find file info in page using any method")
         return {}
         
     except Exception as e:
-        logger.error(f"Error extracting from page: {e}")
+        logger.error(f"Error extracting from page: {e}", exc_info=True)
         return {}
 
 
