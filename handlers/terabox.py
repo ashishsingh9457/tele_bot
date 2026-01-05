@@ -1,5 +1,7 @@
 import re
+import json
 import httpx
+from bs4 import BeautifulSoup
 from telegram import Update
 from telegram.ext import ContextTypes
 
@@ -52,59 +54,107 @@ async def terabox_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def is_valid_terabox_url(url: str) -> bool:
     """Validate if the URL is a Terabox share link."""
     terabox_patterns = [
-        r'https?://(?:www\.)?terabox\.com/s/\w+',
-        r'https?://(?:www\.)?1024terabox\.com/s/\w+',
-        r'https?://(?:www\.)?teraboxapp\.com/s/\w+',
+        r'https?://(?:www\.)?terabox\.com/s/[\w-]+',
+        r'https?://(?:www\.)?terabox\.app/s/[\w-]+',
+        r'https?://(?:www\.)?1024terabox\.com/s/[\w-]+',
+        r'https?://(?:www\.)?teraboxapp\.com/s/[\w-]+',
+        r'https?://(?:www\.)?terabox\.com/sharing/link\?surl=[\w-]+',
+        r'https?://(?:www\.)?terabox\.app/sharing/link\?surl=[\w-]+',
     ]
     return any(re.match(pattern, url) for pattern in terabox_patterns)
 
 
 async def extract_mp4_files(url: str) -> list:
     """
-    Extract MP4 files from Terabox URL.
+    Extract MP4 files from Terabox URL with robust parsing.
     
-    Note: Terabox has anti-scraping measures. This is a basic implementation
-    that may need to be enhanced with:
-    - User-Agent rotation
-    - Cookie handling
-    - JavaScript rendering (using playwright/selenium)
-    - API reverse engineering
+    Uses multiple extraction methods:
+    1. Direct MP4 URLs from HTML
+    2. JSON data embedded in JavaScript
+    3. API endpoint reverse engineering
+    4. BeautifulSoup HTML parsing
     """
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
         'Accept-Language': 'en-US,en;q=0.5',
-        'Referer': 'https://www.terabox.com/',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'none',
+        'Cache-Control': 'max-age=0',
     }
 
-    async with httpx.AsyncClient(headers=headers, follow_redirects=True, timeout=30.0) as client:
+    async with httpx.AsyncClient(headers=headers, follow_redirects=True, timeout=60.0) as client:
         try:
+            # Fetch the main page
             response = await client.get(url)
             response.raise_for_status()
             html_content = response.text
 
             mp4_files = []
             
-            # Pattern 1: Look for direct MP4 links in the HTML
-            mp4_pattern = r'https?://[^\s<>"]+\.mp4[^\s<>"]*'
-            mp4_urls = re.findall(mp4_pattern, html_content)
+            # Method 1: Parse with BeautifulSoup for structured data
+            soup = BeautifulSoup(html_content, 'lxml')
             
-            for mp4_url in set(mp4_urls):
-                mp4_files.append({
-                    'name': extract_filename_from_url(mp4_url),
-                    'url': mp4_url,
-                    'size': 'Unknown'
-                })
-
-            # Pattern 2: Look for JSON data that might contain file information
-            json_pattern = r'window\.jsToken\s*=\s*({[^}]+})'
-            json_matches = re.findall(json_pattern, html_content)
+            # Method 2: Extract JSON data from script tags
+            script_tags = soup.find_all('script')
+            for script in script_tags:
+                script_content = script.string
+                if script_content:
+                    # Look for file information in various JSON structures
+                    json_patterns = [
+                        r'window\.jsToken\s*=\s*({.+?});',
+                        r'locals\.mset\(({.+?})\);',
+                        r'window\.yunData\s*=\s*({.+?});',
+                        r'file_list":\s*\[({.+?})\]',
+                    ]
+                    
+                    for pattern in json_patterns:
+                        matches = re.findall(pattern, script_content, re.DOTALL)
+                        for match in matches:
+                            try:
+                                data = json.loads(match)
+                                extracted = extract_files_from_json(data)
+                                mp4_files.extend(extracted)
+                            except (json.JSONDecodeError, TypeError):
+                                continue
             
-            # Pattern 3: Look for file list in JavaScript variables
-            file_list_pattern = r'file_list":\s*\[([^\]]+)\]'
-            file_list_matches = re.findall(file_list_pattern, html_content)
-
-            return mp4_files
+            # Method 3: Direct MP4 URL extraction with improved patterns
+            mp4_patterns = [
+                r'https?://[^\s<>"]+\.mp4(?:\?[^\s<>"]*)?',
+                r'"(https?://[^"]+\.mp4[^"]*)"',
+                r"'(https?://[^']+\.mp4[^']*)'",
+            ]
+            
+            for pattern in mp4_patterns:
+                mp4_urls = re.findall(pattern, html_content)
+                for mp4_url in set(mp4_urls):
+                    if mp4_url and is_valid_mp4_url(mp4_url):
+                        mp4_files.append({
+                            'name': extract_filename_from_url(mp4_url),
+                            'url': clean_url(mp4_url),
+                            'size': 'Unknown'
+                        })
+            
+            # Method 4: Try to extract surl and make API call
+            surl_match = re.search(r'surl=([\w-]+)', url)
+            if surl_match:
+                surl = surl_match.group(1)
+                api_files = await fetch_from_api(client, surl, headers)
+                mp4_files.extend(api_files)
+            
+            # Remove duplicates based on URL
+            seen_urls = set()
+            unique_files = []
+            for file in mp4_files:
+                if file['url'] not in seen_urls:
+                    seen_urls.add(file['url'])
+                    unique_files.append(file)
+            
+            return unique_files
 
         except httpx.HTTPError as e:
             raise Exception(f"HTTP error occurred: {str(e)}")
@@ -114,6 +164,89 @@ async def extract_mp4_files(url: str) -> list:
 
 def extract_filename_from_url(url: str) -> str:
     """Extract filename from URL."""
-    parts = url.split('/')
-    filename = parts[-1].split('?')[0]
-    return filename if filename else 'video.mp4'
+    try:
+        parts = url.split('/')
+        filename = parts[-1].split('?')[0]
+        # Decode URL encoding if present
+        from urllib.parse import unquote
+        filename = unquote(filename)
+        return filename if filename and filename.endswith('.mp4') else 'video.mp4'
+    except Exception:
+        return 'video.mp4'
+
+
+def is_valid_mp4_url(url: str) -> bool:
+    """Validate if URL is a proper MP4 link."""
+    if not url or len(url) < 10:
+        return False
+    if not url.startswith('http'):
+        return False
+    # Exclude common false positives
+    exclude_patterns = ['thumbnail', 'preview', 'icon', '.js', '.css', '.png', '.jpg']
+    return not any(pattern in url.lower() for pattern in exclude_patterns)
+
+
+def clean_url(url: str) -> str:
+    """Clean and normalize URL."""
+    url = url.strip('"\'')
+    url = url.replace('\\/', '/')
+    return url
+
+
+def extract_files_from_json(data: dict) -> list:
+    """Extract MP4 files from JSON data structure."""
+    files = []
+    
+    def recursive_search(obj):
+        if isinstance(obj, dict):
+            # Look for common file info keys
+            if 'server_filename' in obj and 'dlink' in obj:
+                filename = obj.get('server_filename', '')
+                if filename.endswith('.mp4'):
+                    files.append({
+                        'name': filename,
+                        'url': obj.get('dlink', ''),
+                        'size': format_size(obj.get('size', 0))
+                    })
+            
+            # Recursively search nested objects
+            for value in obj.values():
+                recursive_search(value)
+        elif isinstance(obj, list):
+            for item in obj:
+                recursive_search(item)
+    
+    recursive_search(data)
+    return files
+
+
+def format_size(size_bytes: int) -> str:
+    """Format file size in human-readable format."""
+    try:
+        size_bytes = int(size_bytes)
+        for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
+            if size_bytes < 1024.0:
+                return f"{size_bytes:.2f} {unit}"
+            size_bytes /= 1024.0
+        return f"{size_bytes:.2f} PB"
+    except (ValueError, TypeError):
+        return 'Unknown'
+
+
+async def fetch_from_api(client: httpx.AsyncClient, surl: str, headers: dict) -> list:
+    """Try to fetch file list from Terabox API endpoints."""
+    api_endpoints = [
+        f'https://www.terabox.app/share/list?shorturl={surl}&root=1',
+        f'https://www.terabox.com/share/list?shorturl={surl}&root=1',
+    ]
+    
+    for endpoint in api_endpoints:
+        try:
+            response = await client.get(endpoint, headers=headers, timeout=30.0)
+            if response.status_code == 200:
+                data = response.json()
+                return extract_files_from_json(data)
+        except Exception:
+            continue
+    
+    return []
