@@ -94,22 +94,28 @@ async def get_terabox_download_with_browser(url: str) -> dict:
                 
                 logger.info(f"Page data: {file_info}")
                 
-                # Intercept network requests to find video streaming URLs
+                # Intercept ALL network requests to debug what's being loaded
                 logger.info("Setting up network interception for video URLs...")
                 
                 video_urls = []
+                all_requests = []
                 
                 async def handle_response(response):
-                    nonlocal video_urls
+                    nonlocal video_urls, all_requests
                     url = response.url
                     
-                    # Skip analytics and common non-video URLs
-                    if any(skip in url.lower() for skip in ['analytics', 'google', 'facebook', 'doubleclick']):
-                        return
+                    # Log all non-analytics requests for debugging
+                    if not any(skip in url.lower() for skip in ['analytics', 'google', 'facebook', 'doubleclick', 'clarity.ms']):
+                        all_requests.append({
+                            'url': url[:200],
+                            'content_type': response.headers.get('content-type', 'unknown'),
+                            'status': response.status
+                        })
                     
                     # Look for video streaming URLs
-                    if '.mp4' in url or 'video' in url.lower() or response.headers.get('content-type', '').startswith('video/'):
-                        logger.info(f"Found potential video URL: {url[:150]}...")
+                    content_type = response.headers.get('content-type', '').lower()
+                    if '.mp4' in url or 'video' in url.lower() or content_type.startswith('video/') or 'stream' in url.lower():
+                        logger.info(f"Found potential video URL: {url[:150]}... (content-type: {content_type})")
                         if url not in video_urls:
                             video_urls.append(url)
                 
@@ -151,6 +157,11 @@ async def get_terabox_download_with_browser(url: str) -> dict:
                 
                 # Wait a bit more for any lazy-loaded video URLs
                 await asyncio.sleep(2)
+                
+                # Log all captured requests for debugging
+                logger.info(f"Captured {len(all_requests)} network requests")
+                for req in all_requests[:10]:  # Log first 10 for debugging
+                    logger.info(f"Request: {req['url']} | Type: {req['content_type']} | Status: {req['status']}")
                 
                 # Check if we found any video URLs
                 if video_urls:
